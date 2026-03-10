@@ -8,6 +8,15 @@
   theme: 'duduta_theme_v1'
 };
 
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDl71Ezdl85KnoEuBpBaz1pVfC2K3yR0QQ',
+  authDomain: 'myworkboard-981bf.firebaseapp.com',
+  projectId: 'myworkboard-981bf',
+  storageBucket: 'myworkboard-981bf.firebasestorage.app',
+  messagingSenderId: '840533947338',
+  appId: '1:840533947338:web:74fc5506b12b39f9279533'
+};
+
 const CATEGORIES = ['쿠폰정보', '건축정보', '게임정보', '아이템위치정보', '소통'];
 
 const defaultPosts = [
@@ -40,8 +49,8 @@ const defaultPosts = [
   }
 ];
 
-let posts = loadJSON(STORAGE_KEYS.posts, defaultPosts);
 let users = loadJSON(STORAGE_KEYS.users, []);
+let posts = loadJSON(STORAGE_KEYS.posts, defaultPosts).map(normalizePost);
 let activeChannel = 'all';
 let isAdmin = false;
 let currentUser = null;
@@ -50,6 +59,12 @@ let expandedPostIds = new Set();
 let currentFeedPage = 1;
 const FEED_PAGE_SIZE = 4;
 const guestToken = getGuestToken();
+
+let remoteDb = null;
+let remoteAuth = null;
+let remoteReady = false;
+let remoteSeedTried = false;
+let remoteMemoSeedTried = false;
 
 const channelList = document.getElementById('channelList');
 const feedList = document.getElementById('feedList');
@@ -100,6 +115,7 @@ hydrateAuth();
 applySavedTheme();
 renderUserSection();
 syncInputsForCurrentUser();
+initRealtimeSync();
 
 channelList.addEventListener('click', (event) => {
   const button = event.target.closest('.channel-btn');
@@ -117,6 +133,106 @@ channelList.addEventListener('click', (event) => {
   currentFeedPage = 1;
   renderPosts();
 });
+
+function initRealtimeSync() {
+  if (typeof firebase === 'undefined') return;
+
+  try {
+    if (!firebase.apps.length) {
+      firebase.initializeApp(FIREBASE_CONFIG);
+    }
+    remoteDb = firebase.firestore();
+    remoteAuth = firebase.auth();
+
+    remoteAuth.signInAnonymously()
+      .then(() => {
+        remoteReady = true;
+        subscribeRemotePosts();
+        subscribeRemoteMemo();
+      })
+      .catch((error) => {
+        console.error('[DUDUTA] Firebase 익명 로그인 실패:', error);
+      });
+  } catch (error) {
+    console.error('[DUDUTA] Firebase 초기화 실패:', error);
+  }
+}
+
+function subscribeRemotePosts() {
+  if (!remoteDb) return;
+
+  remoteDb.collection('duduta_posts')
+    .orderBy('createdAt', 'desc')
+    .onSnapshot(async (snap) => {
+      if (snap.empty) {
+        if (!remoteSeedTried && posts.length) {
+          remoteSeedTried = true;
+          await seedRemotePostsFromLocal();
+          return;
+        }
+      }
+
+      if (!snap.empty) remoteSeedTried = true;
+      posts = snap.docs.map((doc) => normalizePost({ id: doc.id, ...doc.data() }));
+      saveJSON(STORAGE_KEYS.posts, posts);
+      renderPosts();
+      renderAdminPanel();
+    }, (error) => {
+      console.error('[DUDUTA] 게시글 실시간 동기화 실패:', error);
+    });
+}
+
+async function seedRemotePostsFromLocal() {
+  if (!remoteDb || !posts.length) return;
+
+  const batch = remoteDb.batch();
+  posts.forEach((post) => {
+    const normalized = normalizePost(post);
+    const ref = remoteDb.collection('duduta_posts').doc(normalized.id);
+    batch.set(ref, {
+      nick: normalized.nick,
+      ownerType: normalized.ownerType,
+      ownerId: normalized.ownerId,
+      type: normalized.type,
+      text: normalized.text,
+      createdAt: normalized.createdAt
+    });
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error('[DUDUTA] 초기 게시글 업로드 실패:', error);
+  }
+}
+
+function subscribeRemoteMemo() {
+  if (!remoteDb) return;
+
+  const ref = remoteDb.collection('duduta_config').doc('sharedMemo');
+  ref.onSnapshot(async (doc) => {
+    if (!doc.exists) {
+      const localMemo = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
+      if (!remoteMemoSeedTried && localMemo) {
+        remoteMemoSeedTried = true;
+        try {
+          await ref.set({ text: localMemo, updatedAt: Date.now() }, { merge: true });
+        } catch (error) {
+          console.error('[DUDUTA] 초기 메모 업로드 실패:', error);
+        }
+      }
+      return;
+    }
+
+    const text = String((doc.data() && doc.data().text) || '');
+    localStorage.setItem(STORAGE_KEYS.sharedMemo, text);
+    if (document.activeElement !== strategyMemo) {
+      strategyMemo.value = text;
+    }
+  }, (error) => {
+    console.error('[DUDUTA] 메모 실시간 동기화 실패:', error);
+  });
+}
 
 function addPost() {
   const title = (titleInput.value || '').trim();
@@ -139,7 +255,7 @@ function addPost() {
     return;
   }
 
-  posts.unshift({
+  const newPost = normalizePost({
     id: crypto.randomUUID(),
     nick: authorNick,
     ownerType: currentUser ? 'user' : 'guest',
@@ -149,8 +265,24 @@ function addPost() {
     createdAt: Date.now()
   });
 
+  posts.unshift(newPost);
   posts = posts.slice(0, 180);
   saveJSON(STORAGE_KEYS.posts, posts);
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_posts').doc(newPost.id).set({
+      nick: newPost.nick,
+      ownerType: newPost.ownerType,
+      ownerId: newPost.ownerId,
+      type: newPost.type,
+      text: newPost.text,
+      createdAt: newPost.createdAt
+    }).catch((error) => {
+      console.error('[DUDUTA] 게시글 등록 실패:', error);
+      alert('서버 저장에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
   titleInput.value = '';
   messageInput.value = '';
   currentFeedPage = 1;
@@ -160,6 +292,18 @@ function addPost() {
 
 function clearPosts() {
   if (!confirm('게시글을 모두 초기화할까요?')) return;
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_posts').get().then((snap) => {
+      const batch = remoteDb.batch();
+      snap.forEach((doc) => batch.delete(doc.ref));
+      return batch.commit();
+    }).catch((error) => {
+      console.error('[DUDUTA] 게시글 초기화 실패:', error);
+      alert('서버 초기화에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
   posts = [];
   expandedPostIds = new Set();
   currentFeedPage = 1;
@@ -169,14 +313,37 @@ function clearPosts() {
 }
 
 function saveMemo() {
-  localStorage.setItem(STORAGE_KEYS.sharedMemo, strategyMemo.value || '');
+  const text = strategyMemo.value || '';
+  localStorage.setItem(STORAGE_KEYS.sharedMemo, text);
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_config').doc('sharedMemo').set({
+      text,
+      updatedAt: Date.now()
+    }, { merge: true }).catch((error) => {
+      console.error('[DUDUTA] 메모 저장 실패:', error);
+      alert('서버 저장에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
   alert('전체 메모를 저장했습니다.');
 }
 
 function clearMemo() {
   if (!confirm('전체 메모를 초기화할까요?')) return;
+
   strategyMemo.value = '';
   localStorage.removeItem(STORAGE_KEYS.sharedMemo);
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_config').doc('sharedMemo').set({
+      text: '',
+      updatedAt: Date.now()
+    }, { merge: true }).catch((error) => {
+      console.error('[DUDUTA] 메모 초기화 실패:', error);
+      alert('서버 초기화에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
 }
 
 function insertTemplate(text, type) {
@@ -304,6 +471,20 @@ function saveEditedPost() {
   });
 
   saveJSON(STORAGE_KEYS.posts, posts);
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_posts').doc(editingPostId).set({
+      nick,
+      ownerType,
+      ownerId,
+      type,
+      text: `${title}\n${body}`,
+      createdAt: targetPost.createdAt
+    }, { merge: true }).catch((error) => {
+      console.error('[DUDUTA] 게시글 수정 실패:', error);
+      alert('서버 수정에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
   closeModal('postEditModal');
   editingPostId = null;
   renderPosts();
@@ -343,10 +524,19 @@ function deletePostById(id) {
   if (!targetPost) return;
   if (!canDeletePost(targetPost)) return;
   if (!confirm('이 게시글을 삭제할까요?')) return;
+
   posts = posts.filter((post) => post.id !== id);
   expandedPostIds.delete(id);
   currentFeedPage = 1;
   saveJSON(STORAGE_KEYS.posts, posts);
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_posts').doc(id).delete().catch((error) => {
+      console.error('[DUDUTA] 게시글 삭제 실패:', error);
+      alert('서버 삭제에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
   renderPosts();
   renderAdminPanel();
 }
@@ -465,6 +655,22 @@ function changeNickname() {
     };
   });
   saveJSON(STORAGE_KEYS.posts, posts);
+
+  if (remoteReady && remoteDb) {
+    const owned = posts.filter((post) => post.ownerType === 'user' && post.ownerId === currentUser.id);
+    owned.forEach((post) => {
+      remoteDb.collection('duduta_posts').doc(post.id).set({
+        nick: post.nick,
+        ownerType: post.ownerType,
+        ownerId: post.ownerId,
+        type: post.type,
+        text: post.text,
+        createdAt: post.createdAt
+      }, { merge: true }).catch((error) => {
+        console.error('[DUDUTA] 닉네임 변경 반영 실패:', error);
+      });
+    });
+  }
 
   if (renameNameInput) renameNameInput.value = '';
   closeModal('renameModal');
@@ -640,6 +846,18 @@ function saveJSON(key, data) {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
+function normalizePost(post) {
+  return {
+    id: post.id || crypto.randomUUID(),
+    nick: post.nick || 'Guest',
+    ownerType: post.ownerType || (post.nick === 'Guest' ? 'guest' : 'user'),
+    ownerId: post.ownerId || '',
+    type: CATEGORIES.includes(post.type) ? post.type : '소통',
+    text: String(post.text || ''),
+    createdAt: Number(post.createdAt) || Date.now()
+  };
+}
+
 function escapeHtml(text) {
   return String(text)
     .replace(/&/g, '&amp;')
@@ -775,5 +993,3 @@ window.saveEditedPost = saveEditedPost;
 window.applyPostCategory = applyPostCategory;
 window.togglePostExpand = togglePostExpand;
 window.goFeedPage = goFeedPage;
-
-
