@@ -60,7 +60,7 @@ let expandedPostIds = new Set();
 let currentMainFeedPage = 1;
 let currentChatFeedPage = 1;
 const FEED_PAGE_SIZE = 4;
-const CHAT_FEED_PAGE_SIZE = 3;
+const CHAT_FEED_PAGE_SIZE = 5;
 const guestToken = getGuestToken();
 
 let remoteDb = null;
