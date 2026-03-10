@@ -86,6 +86,14 @@ if (loginPwInput) {
   });
 }
 
+if (adminPwInput) {
+  adminPwInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    loginAdmin();
+  });
+}
+
 hydrateAuth();
 renderUserSection();
 syncInputsForCurrentUser();
@@ -220,7 +228,7 @@ function renderPosts() {
       </div>
       <div class="post-actions">
         ${canEditPost(post) ? `<button class="btn-ghost" onclick="openEditPostModal('${post.id}')">수정</button>` : ''}
-        ${isAdmin ? `<button class="btn-ghost" onclick="deletePostById('${post.id}')">삭제</button>` : ''}
+        ${canDeletePost(post) ? `<button class="btn-ghost" onclick="deletePostById('${post.id}')">삭제</button>` : ''}
       </div>
     </article>
   `).join('');
@@ -328,7 +336,9 @@ function renderAdminPanel() {
 }
 
 function deletePostById(id) {
-  if (!isAdmin) return;
+  const targetPost = posts.find((post) => post.id === id);
+  if (!targetPost) return;
+  if (!canDeletePost(targetPost)) return;
   if (!confirm('이 게시글을 삭제할까요?')) return;
   posts = posts.filter((post) => post.id !== id);
   expandedPostIds.delete(id);
@@ -660,6 +670,10 @@ function canEditPost(post) {
   }
 
   return ownerType === 'guest' && ownerId === guestToken;
+}
+
+function canDeletePost(post) {
+  return canEditPost(post);
 }
 
 function applyPostCategory(type) {
