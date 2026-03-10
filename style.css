@@ -552,6 +552,10 @@ body.dark-mode .post-toggle-btn {
   color: #9ab5ff;
 }
 
+body.dark-mode .post-title-btn:hover {
+  color: #d7b7ff;
+}
+
 body.dark-mode .post-type-chip.type-coupon {
   color: #d8ffe8;
 }
@@ -632,7 +636,7 @@ body.dark-mode .floating-admin-btn {
 }
 
 .post-title-btn:hover {
-  color: var(--accent);
+  color: #7c56d6;
 }
 
 .post-toggle-btn {
