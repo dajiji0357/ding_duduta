@@ -4,7 +4,8 @@
   nickname: 'duduta_nickname_v2',
   users: 'duduta_users_v1',
   authUserId: 'duduta_auth_user_id_v1',
-  guestToken: 'duduta_guest_token_v1'
+  guestToken: 'duduta_guest_token_v1',
+  theme: 'duduta_theme_v1'
 };
 
 const CATEGORIES = ['쿠폰정보', '건축정보', '게임정보', '아이템위치정보', '소통'];
@@ -65,6 +66,7 @@ const adminPostList = document.getElementById('adminPostList');
 const authStatus = document.getElementById('authStatus');
 const authLoginBtn = document.getElementById('authLoginBtn');
 const authRenameBtn = document.getElementById('authRenameBtn');
+const themeToggleBtn = document.getElementById('themeToggleBtn');
 const floatingAdminBtn = document.getElementById('floatingAdminBtn');
 const loginUserSelect = document.getElementById('loginUserSelect');
 
@@ -95,6 +97,7 @@ if (adminPwInput) {
 }
 
 hydrateAuth();
+applySavedTheme();
 renderUserSection();
 syncInputsForCurrentUser();
 
@@ -538,6 +541,26 @@ function updateRenameButton() {
   authRenameBtn.disabled = !currentUser;
 }
 
+function applySavedTheme() {
+  const theme = localStorage.getItem(STORAGE_KEYS.theme) || 'light';
+  document.body.classList.toggle('dark-mode', theme === 'dark');
+  updateThemeButton(theme === 'dark');
+}
+
+function toggleTheme() {
+  const isDark = !document.body.classList.contains('dark-mode');
+  document.body.classList.toggle('dark-mode', isDark);
+  localStorage.setItem(STORAGE_KEYS.theme, isDark ? 'dark' : 'light');
+  updateThemeButton(isDark);
+}
+
+function updateThemeButton(isDark) {
+  if (!themeToggleBtn) return;
+  themeToggleBtn.textContent = isDark ? '☀' : '🌙';
+  themeToggleBtn.title = isDark ? '라이트모드 전환' : '다크모드 전환';
+  themeToggleBtn.setAttribute('aria-label', isDark ? '라이트모드 전환' : '다크모드 전환');
+}
+
 function updateAdminButton() {
   if (!floatingAdminBtn) return;
   floatingAdminBtn.textContent = isAdmin ? '로그아웃' : 'ADMIN';
@@ -743,6 +766,7 @@ window.registerUser = registerUser;
 window.loginUser = loginUser;
 window.logoutUser = logoutUser;
 window.changeNickname = changeNickname;
+window.toggleTheme = toggleTheme;
 window.openModal = openModal;
 window.closeModal = closeModal;
 window.closeOnBackdrop = closeOnBackdrop;
@@ -751,4 +775,5 @@ window.saveEditedPost = saveEditedPost;
 window.applyPostCategory = applyPostCategory;
 window.togglePostExpand = togglePostExpand;
 window.goFeedPage = goFeedPage;
+
 

@@ -24,6 +24,24 @@ body {
     linear-gradient(145deg, var(--bg-a), var(--bg-b));
 }
 
+body.dark-mode {
+  --bg-a: #111827;
+  --bg-b: #0b1220;
+  --ink: #dde6f7;
+  --muted: #9ca7bd;
+  --card: rgba(20, 28, 45, 0.88);
+  --line: rgba(148, 163, 196, 0.22);
+  --accent: #86a5ff;
+}
+
+body.dark-mode .shape-1 {
+  background: radial-gradient(circle, rgba(72, 93, 146, 0.32), rgba(72, 93, 146, 0));
+}
+
+body.dark-mode .shape-2 {
+  background: radial-gradient(circle, rgba(46, 126, 126, 0.26), rgba(46, 126, 126, 0));
+}
+
 .page-bg-shape {
   position: fixed;
   border-radius: 50%;
@@ -76,6 +94,32 @@ h1, h2, h3, h4 { margin: 0; }
 h1 {
   font-size: 1.5rem;
   letter-spacing: 0.04em;
+}
+
+.sidebar-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.theme-icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.theme-icon-btn:hover {
+  transform: translateY(-1px);
 }
 
 .title-row {
@@ -196,6 +240,56 @@ h1 {
   cursor: not-allowed;
 }
 
+body.dark-mode .quick-actions button,
+body.dark-mode .auth-box button,
+body.dark-mode .btn-ghost,
+body.dark-mode input,
+body.dark-mode select,
+body.dark-mode textarea {
+  background: rgba(14, 23, 37, 0.85);
+  color: var(--ink);
+  border-color: rgba(160, 177, 212, 0.34);
+}
+
+body.dark-mode .channel-btn {
+  background: rgba(20, 31, 48, 0.82);
+  border-color: rgba(139, 154, 188, 0.25);
+}
+
+body.dark-mode .channel-btn.active {
+  border-color: rgba(134, 165, 255, 0.44);
+}
+
+body.dark-mode .theme-icon-btn {
+  background: rgba(17, 26, 42, 0.9);
+  border-color: rgba(143, 159, 191, 0.28);
+  color: #e8f0ff;
+}
+
+body.dark-mode .channel-btn[data-channel='all']:hover {
+  background: linear-gradient(120deg, rgba(51, 69, 108, 0.85), rgba(38, 56, 91, 0.85));
+}
+
+body.dark-mode .channel-btn[data-channel='쿠폰정보']:hover {
+  background: linear-gradient(120deg, rgba(33, 87, 74, 0.88), rgba(26, 68, 60, 0.88));
+}
+
+body.dark-mode .channel-btn[data-channel='건축정보']:hover {
+  background: linear-gradient(120deg, rgba(38, 68, 122, 0.9), rgba(31, 57, 104, 0.9));
+}
+
+body.dark-mode .channel-btn[data-channel='게임정보']:hover {
+  background: linear-gradient(120deg, rgba(65, 48, 110, 0.9), rgba(52, 39, 92, 0.9));
+}
+
+body.dark-mode .channel-btn[data-channel='아이템위치정보']:hover {
+  background: linear-gradient(120deg, rgba(96, 74, 35, 0.9), rgba(78, 60, 29, 0.9));
+}
+
+body.dark-mode .channel-btn[data-channel='소통']:hover {
+  background: linear-gradient(120deg, rgba(102, 53, 39, 0.9), rgba(81, 42, 31, 0.9));
+}
+
 .btn-primary {
   background: linear-gradient(130deg, var(--accent), #6f8fee);
   color: var(--accent-ink);
@@ -309,6 +403,12 @@ textarea {
   font-weight: 700;
 }
 
+body.dark-mode .auth-status {
+  background: rgba(17, 26, 42, 0.86);
+  border-color: rgba(143, 159, 191, 0.28);
+  color: #d5def0;
+}
+
 .auth-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -378,6 +478,78 @@ textarea {
   grid-template-columns: 1fr auto;
   gap: 8px 12px;
   align-items: start;
+}
+
+body.dark-mode .post,
+body.dark-mode .admin-item,
+body.dark-mode .guide-box,
+body.dark-mode .modal-content {
+  background: rgba(17, 26, 42, 0.95);
+  border-color: var(--line);
+}
+
+body.dark-mode .composer,
+body.dark-mode .feed,
+body.dark-mode .right-col,
+body.dark-mode .admin-panel {
+  border-color: rgba(160, 177, 212, 0.3);
+}
+
+body.dark-mode .composer .tag {
+  border-color: rgba(160, 177, 212, 0.4);
+}
+
+body.dark-mode .pager-btn {
+  background: rgba(19, 30, 49, 0.9);
+  color: #dbe7ff;
+  border-color: rgba(150, 169, 206, 0.38);
+}
+
+body.dark-mode .pager-btn.active {
+  background: linear-gradient(120deg, rgba(66, 93, 154, 0.85), rgba(49, 72, 126, 0.85));
+  color: #f3f7ff;
+  border-color: rgba(168, 190, 235, 0.62);
+}
+
+body.dark-mode .post-author {
+  background: rgba(40, 52, 77, 0.85);
+  color: #c8d3ea;
+  border-color: rgba(137, 152, 183, 0.32);
+}
+
+body.dark-mode .post-content a {
+  color: #98b3ff;
+}
+
+body.dark-mode .post-title-btn:hover,
+body.dark-mode .post-toggle-btn {
+  color: #9ab5ff;
+}
+
+body.dark-mode .post-type-chip.type-coupon {
+  color: #d8ffe8;
+}
+
+body.dark-mode .post-type-chip.type-build {
+  color: #d8e6ff;
+}
+
+body.dark-mode .post-type-chip.type-game {
+  color: #eadfff;
+}
+
+body.dark-mode .post-type-chip.type-item {
+  color: #ffecc6;
+}
+
+body.dark-mode .post-type-chip.type-chat {
+  color: #ffe0d6;
+}
+
+body.dark-mode .floating-admin-btn {
+  background: rgba(19, 28, 43, 0.72);
+  color: rgba(220, 231, 251, 0.82);
+  border-color: rgba(143, 159, 191, 0.25);
 }
 
 .post-main {
