@@ -4,6 +4,7 @@
   nickname: 'duduta_nickname_v2',
   users: 'duduta_users_v1',
   authUserId: 'duduta_auth_user_id_v1',
+  adminAuth: 'duduta_admin_auth_v1',
   guestToken: 'duduta_guest_token_v1',
   theme: 'duduta_theme_v1'
 };
@@ -112,6 +113,7 @@ if (adminPwInput) {
 }
 
 hydrateAuth();
+hydrateAdminAuth();
 applySavedTheme();
 renderUserSection();
 syncInputsForCurrentUser();
@@ -556,15 +558,16 @@ function loginAdmin() {
     return;
   }
   isAdmin = true;
+  localStorage.setItem(STORAGE_KEYS.adminAuth, '1');
   adminPwInput.value = '';
   closeModal('adminModal');
   renderAdminPanel();
   renderPosts();
-  location.reload();
 }
 
 function logoutAdmin() {
   isAdmin = false;
+  localStorage.removeItem(STORAGE_KEYS.adminAuth);
   renderAdminPanel();
   renderPosts();
 }
@@ -686,6 +689,10 @@ function hydrateAuth() {
   const authUserId = localStorage.getItem(STORAGE_KEYS.authUserId);
   if (!authUserId) return;
   currentUser = users.find((user) => user.id === authUserId) || null;
+}
+
+function hydrateAdminAuth() {
+  isAdmin = localStorage.getItem(STORAGE_KEYS.adminAuth) === '1';
 }
 
 function renderUserSection() {
@@ -995,3 +1002,4 @@ window.saveEditedPost = saveEditedPost;
 window.applyPostCategory = applyPostCategory;
 window.togglePostExpand = togglePostExpand;
 window.goFeedPage = goFeedPage;
+
