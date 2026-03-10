@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Duduta Game Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&family=SUIT:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+
+  <div class="layout">
+    <aside class="sidebar panel">
+      <h1>DUDUTA</h1>
+      <p class="muted">게임 소통 허브</p>
+
+      <div class="menu-title">채널</div>
+      <div id="channelList" class="channel-list">
+        <button class="channel-btn active" data-channel="all"># 전체</button>
+        <button class="channel-btn" data-channel="공지"># 공지</button>
+        <button class="channel-btn" data-channel="파티"># 파티모집</button>
+        <button class="channel-btn" data-channel="전략"># 전략</button>
+        <button class="channel-btn" data-channel="자유"># 자유</button>
+      </div>
+
+      <div class="menu-title">빠른 템플릿</div>
+      <div class="quick-actions">
+        <button onclick="insertTemplate('오늘 저녁 9시 레이드 2명 구합니다. 탱/힐 환영!')">파티모집</button>
+        <button onclick="insertTemplate('이번 패치 핵심: 보스 2페이즈 패턴 변경됨, 위치 중요.')">패치요약</button>
+        <button onclick="insertTemplate('초보 질문 있어요! 장비 세팅 추천 부탁드립니다.')">질문하기</button>
+      </div>
+    </aside>
+
+    <main class="center">
+      <section class="panel composer">
+        <div class="composer-head">
+          <h2>실시간 소통 피드</h2>
+          <span id="activeChannelTag" class="tag">#전체</span>
+        </div>
+        <div class="composer-grid">
+          <input id="nicknameInput" type="text" placeholder="닉네임 (예: Duduta_Healer)" maxlength="24">
+          <select id="typeSelect">
+            <option value="공지">공지</option>
+            <option value="파티">파티</option>
+            <option value="전략">전략</option>
+            <option value="자유" selected>자유</option>
+          </select>
+        </div>
+        <textarea id="messageInput" placeholder="게임 소식, 질문, 파티모집, 전략 공유를 남겨보세요." maxlength="280"></textarea>
+        <div class="composer-actions">
+          <span class="muted">짧고 정확하게 작성하면 반응이 빠릅니다.</span>
+          <button class="btn-primary" onclick="addPost()">메시지 등록</button>
+        </div>
+      </section>
+
+      <section class="panel feed">
+        <div class="panel-head">
+          <h3>채널 피드</h3>
+          <button class="btn-ghost" onclick="clearPosts()">피드 초기화</button>
+        </div>
+        <div id="feedList" class="feed-list"></div>
+      </section>
+    </main>
+
+    <aside class="right">
+      <section class="panel board">
+        <div class="panel-head">
+          <h3>오늘의 레이드 모집</h3>
+        </div>
+        <div class="party-form">
+          <input id="partyTitle" type="text" placeholder="예: 토요일 길드레이드">
+          <div class="party-row">
+            <input id="partyTime" type="text" placeholder="시간 (20:30)">
+            <input id="partySlots" type="number" min="1" max="20" placeholder="인원">
+          </div>
+          <button class="btn-primary full" onclick="addParty()">모집글 추가</button>
+        </div>
+        <div id="partyList" class="party-list"></div>
+      </section>
+
+      <section class="panel board">
+        <div class="panel-head">
+          <h3>전략 메모</h3>
+        </div>
+        <textarea id="strategyMemo" placeholder="보스 패턴, 포지션, 콜 규칙 등을 정리하세요."></textarea>
+        <button class="btn-ghost full" onclick="saveMemo()">메모 저장</button>
+      </section>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
