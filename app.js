@@ -560,6 +560,7 @@ function loginAdmin() {
   closeModal('adminModal');
   renderAdminPanel();
   renderPosts();
+  location.reload();
 }
 
 function logoutAdmin() {
@@ -606,6 +607,7 @@ function loginUser() {
   renderUserSection();
   syncInputsForCurrentUser();
   closeModal('loginModal');
+  location.reload();
 }
 
 function logoutUser() {

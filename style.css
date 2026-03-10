@@ -266,6 +266,32 @@ body.dark-mode .theme-icon-btn {
   color: #e8f0ff;
 }
 
+body.dark-mode .tag {
+  color: #e7eeff;
+  border-color: rgba(160, 177, 212, 0.42);
+  background: rgba(61, 82, 126, 0.42);
+}
+
+body.dark-mode .tag.type-coupon {
+  color: #dcffef;
+}
+
+body.dark-mode .tag.type-build {
+  color: #dce8ff;
+}
+
+body.dark-mode .tag.type-game {
+  color: #efe4ff;
+}
+
+body.dark-mode .tag.type-item {
+  color: #ffefce;
+}
+
+body.dark-mode .tag.type-chat {
+  color: #ffe4da;
+}
+
 body.dark-mode .channel-btn[data-channel='all']:hover {
   background: linear-gradient(120deg, rgba(51, 69, 108, 0.85), rgba(38, 56, 91, 0.85));
 }
