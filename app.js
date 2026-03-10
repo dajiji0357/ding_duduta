@@ -1,6 +1,6 @@
 ﻿const STORAGE_KEYS = {
   posts: 'duduta_posts_v2',
-  memoBase: 'duduta_personal_memo_v2',
+  sharedMemo: 'duduta_shared_memo_v1',
   nickname: 'duduta_nickname_v2',
   users: 'duduta_users_v1',
   authUserId: 'duduta_auth_user_id_v1',
@@ -78,6 +78,14 @@ const editTypeSelect = document.getElementById('editTypeSelect');
 const editTitleInput = document.getElementById('editTitleInput');
 const editMessageInput = document.getElementById('editMessageInput');
 
+if (loginPwInput) {
+  loginPwInput.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    loginUser();
+  });
+}
+
 hydrateAuth();
 renderUserSection();
 syncInputsForCurrentUser();
@@ -150,22 +158,14 @@ function clearPosts() {
 }
 
 function saveMemo() {
-  if (!currentUser) {
-    alert('로그인 후 메모를 저장할 수 있습니다.');
-    return;
-  }
-  localStorage.setItem(getMemoKey(currentUser.id), strategyMemo.value || '');
-  alert('메모를 저장했습니다.');
+  localStorage.setItem(STORAGE_KEYS.sharedMemo, strategyMemo.value || '');
+  alert('전체 메모를 저장했습니다.');
 }
 
 function clearMemo() {
-  if (!currentUser) {
-    alert('로그인 후 메모를 초기화할 수 있습니다.');
-    return;
-  }
-  if (!confirm('개인 메모를 초기화할까요?')) return;
+  if (!confirm('전체 메모를 초기화할까요?')) return;
   strategyMemo.value = '';
-  localStorage.removeItem(getMemoKey(currentUser.id));
+  localStorage.removeItem(STORAGE_KEYS.sharedMemo);
 }
 
 function insertTemplate(text, type) {
@@ -537,16 +537,12 @@ function syncInputsForCurrentUser() {
   nicknameInput.disabled = true;
   if (currentUser) {
     nicknameInput.value = currentUser.name;
-    strategyMemo.value = localStorage.getItem(getMemoKey(currentUser.id)) || '';
+    strategyMemo.value = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
     return;
   }
 
   nicknameInput.value = 'Guest';
-  strategyMemo.value = '';
-}
-
-function getMemoKey(userId) {
-  return `${STORAGE_KEYS.memoBase}_${userId}`;
+  strategyMemo.value = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
 }
 
 function getGuestToken() {
@@ -741,3 +737,4 @@ window.saveEditedPost = saveEditedPost;
 window.applyPostCategory = applyPostCategory;
 window.togglePostExpand = togglePostExpand;
 window.goFeedPage = goFeedPage;
+
