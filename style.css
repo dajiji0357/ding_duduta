@@ -747,6 +747,15 @@ body.dark-mode .floating-admin-btn {
   color: var(--muted);
 }
 
+.right-feed-block {
+  margin-top: 12px;
+}
+
+.right-feed-block .feed-list {
+  max-height: 420px;
+  overflow: auto;
+}
+
 .admin-panel {
   border-color: rgba(75, 111, 216, 0.35);
 }

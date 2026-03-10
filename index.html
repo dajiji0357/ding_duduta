@@ -73,13 +73,12 @@
           </div>
         </div>
       </section>
-
       <section class="panel feed">
         <div class="panel-head">
           <h3>커뮤니티 피드</h3>
         </div>
-        <div id="feedList" class="feed-list"></div>
-        <div id="feedPager" class="feed-pager"></div>
+        <div id="mainFeedList" class="feed-list"></div>
+        <div id="mainFeedPager" class="feed-pager"></div>
       </section>
 
       <section id="adminPanel" class="panel admin-panel hidden">
@@ -88,9 +87,11 @@
           <button class="btn-ghost" onclick="logoutAdmin()">관리자 종료</button>
         </div>
         <div class="admin-actions">
+          <button class="btn-ghost" onclick="openAdminUsersModal()">회원리스트</button>
           <button class="btn-ghost" onclick="clearPosts()">게시글 전체 삭제</button>
           <button class="btn-ghost" onclick="clearMemo()">메모 초기화</button>
         </div>
+        <h4>게시글 관리</h4>
         <div id="adminPostList" class="admin-list"></div>
       </section>
     </main>
@@ -101,15 +102,12 @@
       </div>
       <textarea id="strategyMemo" class="memo-box" placeholder="전체 공개 메모장입니다. 게스트 포함 누구나 수정하고 저장할 수 있습니다."></textarea>
       <button class="btn-primary full" onclick="saveMemo()">전체 메모 저장</button>
-
-      <div class="guide-box">
-        <h4>권장 사용법</h4>
-        <ul>
-          <li>쿠폰정보: 코드 + 기간 + 사용처</li>
-          <li>건축정보: 스크린샷 링크 + 배치 팁</li>
-          <li>게임정보: 업데이트 내용 정리</li>
-          <li>소통: 자유 채팅/친구 모집</li>
-        </ul>
+      <div id="rightFeedPreview" class="right-feed-block">
+        <div class="panel-head">
+          <h3>소통 피드 미리보기</h3>
+        </div>
+        <div id="chatFeedList" class="feed-list"></div>
+        <div id="chatFeedPager" class="feed-pager"></div>
       </div>
     </aside>
   </div>
@@ -172,6 +170,14 @@
     </div>
   </div>
 
-  <script src="app.js?v=20260310-3"></script>
+  <div id="adminUsersModal" class="modal" onclick="closeOnBackdrop(event, 'adminUsersModal')">
+    <div class="modal-content">
+      <button class="close-btn" onclick="closeModal('adminUsersModal')">&times;</button>
+      <h3>회원 관리</h3>
+      <div id="adminUserList" class="admin-list"></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=20260310-10"></script>
 </body>
 </html>

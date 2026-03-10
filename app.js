@@ -57,8 +57,10 @@ let isAdmin = false;
 let currentUser = null;
 let editingPostId = null;
 let expandedPostIds = new Set();
-let currentFeedPage = 1;
+let currentMainFeedPage = 1;
+let currentChatFeedPage = 1;
 const FEED_PAGE_SIZE = 4;
+const CHAT_FEED_PAGE_SIZE = 3;
 const guestToken = getGuestToken();
 
 let remoteDb = null;
@@ -66,10 +68,14 @@ let remoteAuth = null;
 let remoteReady = false;
 let remoteSeedTried = false;
 let remoteMemoSeedTried = false;
+let remoteUsersSeedTried = false;
 
 const channelList = document.getElementById('channelList');
-const feedList = document.getElementById('feedList');
-const feedPager = document.getElementById('feedPager');
+const mainFeedList = document.getElementById('mainFeedList');
+const mainFeedPager = document.getElementById('mainFeedPager');
+const chatFeedList = document.getElementById('chatFeedList');
+const chatFeedPager = document.getElementById('chatFeedPager');
+const rightFeedPreview = document.getElementById('rightFeedPreview');
 const activeChannelTag = document.getElementById('activeChannelTag');
 const nicknameInput = document.getElementById('nicknameInput');
 const titleInput = document.getElementById('titleInput');
@@ -78,6 +84,7 @@ const typeSelect = document.getElementById('typeSelect');
 const strategyMemo = document.getElementById('strategyMemo');
 const adminPanel = document.getElementById('adminPanel');
 const adminPostList = document.getElementById('adminPostList');
+const adminUserList = document.getElementById('adminUserList');
 
 const authStatus = document.getElementById('authStatus');
 const authLoginBtn = document.getElementById('authLoginBtn');
@@ -115,6 +122,7 @@ if (adminPwInput) {
 hydrateAuth();
 hydrateAdminAuth();
 applySavedTheme();
+applyInitialChannelFromUrl();
 renderUserSection();
 syncInputsForCurrentUser();
 initRealtimeSync();
@@ -123,7 +131,24 @@ channelList.addEventListener('click', (event) => {
   const button = event.target.closest('.channel-btn');
   if (!button) return;
 
-  activeChannel = button.dataset.channel;
+  const nextChannel = button.dataset.channel;
+  if (nextChannel === '소통') {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('channel') !== '소통') {
+      url.searchParams.set('channel', '소통');
+      window.location.href = url.toString();
+      return;
+    }
+  }
+
+  activeChannel = nextChannel;
+  if (activeChannel !== '소통') {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('channel')) {
+      url.searchParams.delete('channel');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }
   if (activeChannel !== 'all' && CATEGORIES.includes(activeChannel)) {
     typeSelect.value = activeChannel;
   }
@@ -132,7 +157,7 @@ channelList.addEventListener('click', (event) => {
 
   activeChannelTag.textContent = activeChannel === 'all' ? '#전체' : `#${activeChannel}`;
   updateActiveTagStyle(activeChannel);
-  currentFeedPage = 1;
+  currentMainFeedPage = 1;
   renderPosts();
 });
 
@@ -149,6 +174,7 @@ function initRealtimeSync() {
     remoteAuth.signInAnonymously()
       .then(() => {
         remoteReady = true;
+        subscribeRemoteUsers();
         subscribeRemotePosts();
         subscribeRemoteMemo();
       })
@@ -182,6 +208,52 @@ function subscribeRemotePosts() {
     }, (error) => {
       console.error('[DUDUTA] 게시글 실시간 동기화 실패:', error);
     });
+}
+
+function subscribeRemoteUsers() {
+  if (!remoteDb) return;
+
+  remoteDb.collection('duduta_users')
+    .orderBy('name')
+    .onSnapshot(async (snap) => {
+      if (snap.empty) {
+        if (!remoteUsersSeedTried && users.length) {
+          remoteUsersSeedTried = true;
+          await seedRemoteUsersFromLocal();
+          return;
+        }
+      }
+
+      if (!snap.empty) remoteUsersSeedTried = true;
+      users = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      saveJSON(STORAGE_KEYS.users, users);
+      syncCurrentUserFromStoredAuth();
+      renderUserSection();
+      syncInputsForCurrentUser();
+    }, (error) => {
+      console.error('[DUDUTA] 사용자 실시간 동기화 실패:', error);
+    });
+}
+
+async function seedRemoteUsersFromLocal() {
+  if (!remoteDb || !users.length) return;
+
+  const batch = remoteDb.batch();
+  users.forEach((user) => {
+    if (!user || !user.id || !user.name) return;
+    const ref = remoteDb.collection('duduta_users').doc(user.id);
+    batch.set(ref, {
+      name: String(user.name),
+      pw: String(user.pw || ''),
+      createdAt: Date.now()
+    }, { merge: true });
+  });
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    console.error('[DUDUTA] 초기 사용자 업로드 실패:', error);
+  }
 }
 
 async function seedRemotePostsFromLocal() {
@@ -287,7 +359,8 @@ function addPost() {
 
   titleInput.value = '';
   messageInput.value = '';
-  currentFeedPage = 1;
+  currentMainFeedPage = 1;
+  currentChatFeedPage = 1;
   renderPosts();
   renderAdminPanel();
 }
@@ -308,7 +381,8 @@ function clearPosts() {
 
   posts = [];
   expandedPostIds = new Set();
-  currentFeedPage = 1;
+  currentMainFeedPage = 1;
+  currentChatFeedPage = 1;
   saveJSON(STORAGE_KEYS.posts, posts);
   renderPosts();
   renderAdminPanel();
@@ -362,29 +436,75 @@ function insertTemplate(text, type) {
     });
     activeChannelTag.textContent = `#${type}`;
     updateActiveTagStyle(type);
-    currentFeedPage = 1;
+    currentMainFeedPage = 1;
     renderPosts();
   }
   messageInput.focus();
 }
 
 function renderPosts() {
-  const filtered = activeChannel === 'all'
-    ? posts
+  syncChannelSelectionUI();
+  const mainFiltered = activeChannel === 'all'
+    ? posts.filter((post) => post.type !== '소통')
     : posts.filter((post) => post.type === activeChannel);
+  const chatFiltered = posts.filter((post) => post.type === '소통');
+  updateRightFeedPreviewVisibility();
+  renderFeedList(mainFeedList, mainFeedPager, mainFiltered, currentMainFeedPage, 'main', FEED_PAGE_SIZE);
+  renderFeedList(chatFeedList, chatFeedPager, chatFiltered, currentChatFeedPage, 'chat', CHAT_FEED_PAGE_SIZE);
+}
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / FEED_PAGE_SIZE));
-  if (currentFeedPage > totalPages) currentFeedPage = totalPages;
-  const start = (currentFeedPage - 1) * FEED_PAGE_SIZE;
-  const pageItems = filtered.slice(start, start + FEED_PAGE_SIZE);
+function updateRightFeedPreviewVisibility() {
+  if (!rightFeedPreview) return;
+  rightFeedPreview.classList.toggle('hidden', activeChannel === '소통');
+}
+
+function applyInitialChannelFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const channelFromUrl = params.get('channel');
+  if (!channelFromUrl) return;
+  if (channelFromUrl === 'all' || CATEGORIES.includes(channelFromUrl)) {
+    activeChannel = channelFromUrl;
+  }
+}
+
+function syncChannelSelectionUI() {
+  if (channelList) {
+    channelList.querySelectorAll('.channel-btn').forEach((btn) => {
+      const isActive = btn.dataset.channel === activeChannel;
+      btn.classList.toggle('active', isActive);
+    });
+  }
+  if (activeChannelTag) {
+    activeChannelTag.textContent = activeChannel === 'all' ? '#전체' : `#${activeChannel}`;
+  }
+  if (activeChannel !== 'all' && CATEGORIES.includes(activeChannel) && typeSelect) {
+    typeSelect.value = activeChannel;
+  }
+  updateActiveTagStyle(activeChannel);
+}
+
+function renderFeedList(listEl, pagerEl, filtered, currentPage, mode, pageSize) {
+  if (!listEl || !pagerEl) return;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  if (mode === 'main') {
+    currentMainFeedPage = safePage;
+  } else {
+    currentChatFeedPage = safePage;
+  }
+  const start = (safePage - 1) * pageSize;
+  const pageItems = filtered.slice(start, start + pageSize);
 
   if (!pageItems.length) {
-    feedList.innerHTML = '<div class="post"><div class="post-content">해당 카테고리에 등록된 글이 없습니다.</div></div>';
-    if (feedPager) feedPager.innerHTML = '';
+    const emptyText = mode === 'main'
+      ? '해당 카테고리에 등록된 글이 없습니다.'
+      : '소통 카테고리에 등록된 글이 없습니다.';
+    listEl.innerHTML = `<div class="post"><div class="post-content">${emptyText}</div></div>`;
+    pagerEl.innerHTML = '';
     return;
   }
 
-  feedList.innerHTML = pageItems.map((post) => `
+  listEl.innerHTML = pageItems.map((post) => `
     <article class="post">
       <div class="post-main">
         <div class="post-author">${escapeHtml(post.nick)}</div>
@@ -405,23 +525,23 @@ function renderPosts() {
     </article>
   `).join('');
 
-  renderFeedPager(totalPages);
+  renderFeedPager(pagerEl, totalPages, safePage, mode);
 }
 
-function renderFeedPager(totalPages) {
-  if (!feedPager) return;
+function renderFeedPager(pagerEl, totalPages, currentPage, mode) {
   if (totalPages <= 1) {
-    feedPager.innerHTML = '';
+    pagerEl.innerHTML = '';
     return;
   }
 
   const buttons = [];
   for (let page = 1; page <= totalPages; page += 1) {
+    const fn = mode === 'main' ? 'goFeedPage' : 'goChatFeedPage';
     buttons.push(`
-      <button class="pager-btn ${page === currentFeedPage ? 'active' : ''}" onclick="goFeedPage(${page})">${page}</button>
+      <button class="pager-btn ${page === currentPage ? 'active' : ''}" onclick="${fn}(${page})">${page}</button>
     `);
   }
-  feedPager.innerHTML = buttons.join('');
+  pagerEl.innerHTML = buttons.join('');
 }
 
 function openEditPostModal(postId) {
@@ -494,12 +614,14 @@ function saveEditedPost() {
 }
 
 function renderAdminPanel() {
-  if (!adminPanel || !adminPostList) return;
+  if (!adminPanel) return;
   adminPanel.classList.toggle('hidden', !isAdmin);
   updateAdminButton();
+  renderAdminUserList();
 
   if (!isAdmin) return;
 
+  if (!adminPostList) return;
   if (!posts.length) {
     adminPostList.innerHTML = '<div class="admin-item"><div class="post-content">삭제할 게시글이 없습니다.</div></div>';
     return;
@@ -529,7 +651,8 @@ function deletePostById(id) {
 
   posts = posts.filter((post) => post.id !== id);
   expandedPostIds.delete(id);
-  currentFeedPage = 1;
+    currentMainFeedPage = 1;
+    currentChatFeedPage = 1;
   saveJSON(STORAGE_KEYS.posts, posts);
 
   if (remoteReady && remoteDb) {
@@ -539,6 +662,133 @@ function deletePostById(id) {
     });
   }
 
+  renderPosts();
+  renderAdminPanel();
+}
+
+function renderAdminUserList() {
+  if (!adminUserList) return;
+  if (!isAdmin) {
+    adminUserList.innerHTML = '';
+    return;
+  }
+  if (!users.length) {
+    adminUserList.innerHTML = '<div class="admin-item"><div class="post-content">등록된 회원이 없습니다.</div></div>';
+    return;
+  }
+
+  const sortedUsers = users.slice().sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  adminUserList.innerHTML = sortedUsers.map((user) => `
+    <article class="admin-item">
+      <div class="admin-item-head">
+        <div class="admin-item-title">
+          <strong>${escapeHtml(user.name || '')}</strong>
+        </div>
+        <div class="action-row">
+          <button class="btn-ghost" onclick="adminRenameUser('${user.id}')">닉네임 변경</button>
+          <button class="btn-ghost" onclick="adminDeleteUser('${user.id}')">회원 삭제</button>
+        </div>
+      </div>
+    </article>
+  `).join('');
+}
+
+function openAdminUsersModal() {
+  if (!isAdmin) return;
+  renderAdminUserList();
+  openModal('adminUsersModal');
+}
+
+function adminRenameUser(userId) {
+  if (!isAdmin) return;
+  const targetUser = users.find((user) => user.id === userId);
+  if (!targetUser) return;
+
+  const nextName = prompt('변경할 닉네임', targetUser.name || '');
+  if (nextName === null) return;
+  const trimmed = nextName.trim();
+  if (!trimmed) {
+    alert('닉네임을 입력하세요.');
+    return;
+  }
+  if (users.some((user) => user.name === trimmed && user.id !== userId)) {
+    alert('이미 존재하는 닉네임입니다.');
+    return;
+  }
+  if (trimmed === targetUser.name) return;
+
+  users = users.map((user) => (user.id === userId ? { ...user, name: trimmed } : user));
+  saveJSON(STORAGE_KEYS.users, users);
+
+  posts = posts.map((post) => {
+    if ((post.ownerType === 'user' && post.ownerId === userId) || (!post.ownerType && post.nick === targetUser.name)) {
+      return { ...post, nick: trimmed, ownerType: 'user', ownerId: userId };
+    }
+    return post;
+  });
+  saveJSON(STORAGE_KEYS.posts, posts);
+
+  if (currentUser && currentUser.id === userId) {
+    currentUser = { ...currentUser, name: trimmed };
+    localStorage.setItem(STORAGE_KEYS.nickname, trimmed);
+  }
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_users').doc(userId).set({
+      name: trimmed,
+      pw: targetUser.pw || '',
+      updatedAt: Date.now()
+    }, { merge: true }).catch((error) => {
+      console.error('[DUDUTA] 관리자 회원 닉네임 변경 실패:', error);
+      alert('서버 저장에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+
+    posts
+      .filter((post) => post.ownerType === 'user' && post.ownerId === userId)
+      .forEach((post) => {
+        remoteDb.collection('duduta_posts').doc(post.id).set({
+          nick: post.nick,
+          ownerType: post.ownerType,
+          ownerId: post.ownerId,
+          type: post.type,
+          text: post.text,
+          createdAt: post.createdAt
+        }, { merge: true }).catch((error) => {
+          console.error('[DUDUTA] 관리자 게시글 작성자 반영 실패:', error);
+        });
+      });
+  }
+
+  renderUserSection();
+  syncInputsForCurrentUser();
+  renderPosts();
+  renderAdminPanel();
+}
+
+function adminDeleteUser(userId) {
+  if (!isAdmin) return;
+  const targetUser = users.find((user) => user.id === userId);
+  if (!targetUser) return;
+  if (!confirm(`회원 "${targetUser.name}" 을(를) 삭제할까요?`)) return;
+
+  users = users.filter((user) => user.id !== userId);
+  saveJSON(STORAGE_KEYS.users, users);
+
+  if (currentUser && currentUser.id === userId) {
+    currentUser = null;
+    localStorage.removeItem(STORAGE_KEYS.authUserId);
+    localStorage.removeItem(STORAGE_KEYS.nickname);
+  }
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_users').doc(userId).delete().catch((error) => {
+      console.error('[DUDUTA] 관리자 회원 삭제 실패:', error);
+      alert('서버 삭제에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
+  renderUserSection();
+  syncInputsForCurrentUser();
   renderPosts();
   renderAdminPanel();
 }
@@ -584,8 +834,20 @@ function registerUser() {
     return;
   }
 
-  users.push({ id: crypto.randomUUID(), name, pw });
+  const newUser = { id: crypto.randomUUID(), name, pw };
+  users.push(newUser);
   saveJSON(STORAGE_KEYS.users, users);
+
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_users').doc(newUser.id).set({
+      name: newUser.name,
+      pw: newUser.pw,
+      createdAt: Date.now()
+    }, { merge: true }).catch((error) => {
+      console.error('[DUDUTA] 회원가입 서버 저장 실패:', error);
+      alert('서버 저장에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
 
   regNameInput.value = '';
   regPwInput.value = '';
@@ -648,6 +910,17 @@ function changeNickname() {
   saveJSON(STORAGE_KEYS.users, users);
   localStorage.setItem(STORAGE_KEYS.nickname, nextName);
 
+  if (remoteReady && remoteDb) {
+    remoteDb.collection('duduta_users').doc(currentUser.id).set({
+      name: nextName,
+      pw: currentUser.pw || '',
+      updatedAt: Date.now()
+    }, { merge: true }).catch((error) => {
+      console.error('[DUDUTA] 닉네임 서버 저장 실패:', error);
+      alert('서버 저장에 실패했습니다. 잠시 후 다시 시도하세요.');
+    });
+  }
+
   posts = posts.map((post) => {
     const ownedByCurrentUser = post.ownerType === 'user' && post.ownerId === currentUser.id;
     const legacyOwned = !post.ownerType && post.nick === prevName;
@@ -688,6 +961,15 @@ function changeNickname() {
 function hydrateAuth() {
   const authUserId = localStorage.getItem(STORAGE_KEYS.authUserId);
   if (!authUserId) return;
+  currentUser = users.find((user) => user.id === authUserId) || null;
+}
+
+function syncCurrentUserFromStoredAuth() {
+  const authUserId = localStorage.getItem(STORAGE_KEYS.authUserId);
+  if (!authUserId) {
+    currentUser = null;
+    return;
+  }
   currentUser = users.find((user) => user.id === authUserId) || null;
 }
 
@@ -967,13 +1249,20 @@ function togglePostExpand(id) {
 function goFeedPage(page) {
   const next = Number(page);
   if (!Number.isFinite(next) || next < 1) return;
-  currentFeedPage = next;
+  currentMainFeedPage = next;
+  renderPosts();
+}
+
+function goChatFeedPage(page) {
+  const next = Number(page);
+  if (!Number.isFinite(next) || next < 1) return;
+  currentChatFeedPage = next;
   renderPosts();
 }
 
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  ['signupModal', 'loginModal', 'renameModal', 'adminModal', 'postEditModal'].forEach(closeModal);
+  ['signupModal', 'loginModal', 'renameModal', 'adminModal', 'postEditModal', 'adminUsersModal'].forEach(closeModal);
 });
 
 renderPosts();
@@ -1002,4 +1291,8 @@ window.saveEditedPost = saveEditedPost;
 window.applyPostCategory = applyPostCategory;
 window.togglePostExpand = togglePostExpand;
 window.goFeedPage = goFeedPage;
+window.goChatFeedPage = goChatFeedPage;
+window.adminRenameUser = adminRenameUser;
+window.adminDeleteUser = adminDeleteUser;
+window.openAdminUsersModal = openAdminUsersModal;
 
