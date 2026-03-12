@@ -1,5 +1,6 @@
 ﻿const STORAGE_KEYS = {
   posts: 'duduta_posts_v2',
+  albumItems: 'duduta_album_items_v1',
   sharedMemo: 'duduta_shared_memo_v1',
   nickname: 'duduta_nickname_v2',
   users: 'duduta_users_v1',
@@ -18,7 +19,17 @@ const FIREBASE_CONFIG = {
   appId: '1:840533947338:web:74fc5506b12b39f9279533'
 };
 
-const CATEGORIES = ['쿠폰정보', '건축정보', '게임정보', '아이템위치정보', '소통'];
+const CATEGORIES = ['쿠폰정보', '게임정보', '소통'];
+const REMOVED_POST_TYPES = ['건축정보', '아이템위치정보'];
+const ALBUM_CHANNEL = '앨범';
+const ALBUM_MAX_ITEMS = 10;
+const ALBUM_MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ALBUM_INLINE_IMAGE_MAX_BYTES = 450 * 1024;
+const ALBUM_INLINE_MAX_WIDTH = 960;
+const ALBUM_INLINE_JPEG_QUALITY = 0.72;
+const ALBUM_UPLOAD_CONCURRENCY = 2;
+const STORAGE_UPLOAD_TOTAL_TIMEOUT_MS = 30000;
+const STORAGE_UPLOAD_STALL_TIMEOUT_MS = 12000;
 
 const defaultPosts = [
   {
@@ -29,15 +40,6 @@ const defaultPosts = [
     type: '게임정보',
     text: '3월 업데이트 적용\n신규 가구 세트 12종 추가\n건축 모드 충돌 안정화 패치 포함',
     createdAt: Date.now() - 1000 * 60 * 80
-  },
-  {
-    id: crypto.randomUUID(),
-    nick: 'BuildMaster',
-    ownerType: 'guest',
-    ownerId: 'seed',
-    type: '건축정보',
-    text: '지붕 먼저 배치하고 벽 마감하면 충돌이 덜 납니다.',
-    createdAt: Date.now() - 1000 * 60 * 30
   },
   {
     id: crypto.randomUUID(),
@@ -52,6 +54,7 @@ const defaultPosts = [
 
 let users = loadJSON(STORAGE_KEYS.users, []);
 let posts = loadJSON(STORAGE_KEYS.posts, defaultPosts).map(normalizePost);
+let albumItems = loadJSON(STORAGE_KEYS.albumItems, []).map(normalizeAlbumItem);
 let activeChannel = 'all';
 let isAdmin = false;
 let currentUser = null;
@@ -65,14 +68,28 @@ const guestToken = getGuestToken();
 
 let remoteDb = null;
 let remoteAuth = null;
+let remoteStorage = null;
 let remoteReady = false;
+let remoteAuthReadyPromise = null;
+let remoteSubscriptionsReady = false;
 let remoteSeedTried = false;
 let remoteMemoSeedTried = false;
 let remoteUsersSeedTried = false;
+let remoteDeprecatedCleanupTried = false;
+let albumTrimRunning = false;
+let albumUploadInProgress = false;
+let storageUploadDisabled = false;
+let albumProgressDisplay = 0;
+let albumProgressTarget = 0;
+let albumProgressRaf = null;
+let albumProgressHeartbeat = null;
 
 const channelList = document.getElementById('channelList');
 const mainFeedList = document.getElementById('mainFeedList');
 const mainFeedPager = document.getElementById('mainFeedPager');
+const mainFeedPanel = document.getElementById('mainFeedPanel');
+const albumPanel = document.getElementById('albumPanel');
+const albumGrid = document.getElementById('albumGrid');
 const chatFeedList = document.getElementById('chatFeedList');
 const chatFeedPager = document.getElementById('chatFeedPager');
 const rightFeedPreview = document.getElementById('rightFeedPreview');
@@ -81,6 +98,15 @@ const nicknameInput = document.getElementById('nicknameInput');
 const titleInput = document.getElementById('titleInput');
 const messageInput = document.getElementById('messageInput');
 const typeSelect = document.getElementById('typeSelect');
+const albumImageInput = document.getElementById('albumImageInput');
+const albumCaptionInput = document.getElementById('albumCaptionInput');
+const albumUploadBtn = document.getElementById('albumUploadBtn');
+const albumUploadProgress = document.getElementById('albumUploadProgress');
+const albumUploadBar = document.getElementById('albumUploadBar');
+const albumUploadPercent = document.getElementById('albumUploadPercent');
+const albumUploadStatusText = document.getElementById('albumUploadStatusText');
+const albumLightbox = document.getElementById('albumLightbox');
+const albumLightboxImage = document.getElementById('albumLightboxImage');
 const strategyMemo = document.getElementById('strategyMemo');
 const adminPanel = document.getElementById('adminPanel');
 const adminPostList = document.getElementById('adminPostList');
@@ -102,6 +128,8 @@ const editNickSelect = document.getElementById('editNickSelect');
 const editTypeSelect = document.getElementById('editTypeSelect');
 const editTitleInput = document.getElementById('editTitleInput');
 const editMessageInput = document.getElementById('editMessageInput');
+
+purgeDeprecatedLocalData();
 
 if (loginPwInput) {
   loginPwInput.addEventListener('keydown', (event) => {
@@ -170,20 +198,31 @@ function initRealtimeSync() {
     }
     remoteDb = firebase.firestore();
     remoteAuth = firebase.auth();
+    remoteStorage = firebase.storage();
 
-    remoteAuth.signInAnonymously()
+    remoteAuthReadyPromise = remoteAuth.signInAnonymously()
       .then(() => {
         remoteReady = true;
-        subscribeRemoteUsers();
-        subscribeRemotePosts();
-        subscribeRemoteMemo();
+        ensureRemoteSubscriptions();
+        return true;
       })
       .catch((error) => {
         console.error('[DUDUTA] Firebase 익명 로그인 실패:', error);
+        remoteAuthReadyPromise = null;
+        remoteReady = false;
       });
   } catch (error) {
     console.error('[DUDUTA] Firebase 초기화 실패:', error);
   }
+}
+
+function ensureRemoteSubscriptions() {
+  if (remoteSubscriptionsReady) return;
+  remoteSubscriptionsReady = true;
+  subscribeRemoteUsers();
+  subscribeRemotePosts();
+  subscribeRemoteMemo();
+  runRemoteDeprecatedCleanup();
 }
 
 function subscribeRemotePosts() {
@@ -192,6 +231,17 @@ function subscribeRemotePosts() {
   remoteDb.collection('duduta_posts')
     .orderBy('createdAt', 'desc')
     .onSnapshot(async (snap) => {
+      const docs = snap.docs || [];
+      const removedDocs = docs.filter((doc) => {
+        const data = doc.data() || {};
+        return isDeprecatedPostType(data.type);
+      });
+      if (removedDocs.length) {
+        deleteRemoteDocsInChunks(removedDocs.map((doc) => doc.ref)).catch((error) => {
+          console.error('[DUDUTA] 제거 대상 게시글 삭제 실패:', error);
+        });
+      }
+
       if (snap.empty) {
         if (!remoteSeedTried && posts.length) {
           remoteSeedTried = true;
@@ -201,7 +251,10 @@ function subscribeRemotePosts() {
       }
 
       if (!snap.empty) remoteSeedTried = true;
-      posts = snap.docs.map((doc) => normalizePost({ id: doc.id, ...doc.data() }));
+      posts = docs
+        .map((doc) => ({ id: doc.id, ...doc.data() }))
+        .filter((post) => !isDeprecatedPostType(post.type))
+        .map(normalizePost);
       saveJSON(STORAGE_KEYS.posts, posts);
       renderPosts();
       renderAdminPanel();
@@ -261,6 +314,7 @@ async function seedRemotePostsFromLocal() {
 
   const batch = remoteDb.batch();
   posts.forEach((post) => {
+    if (isDeprecatedPostType(post.type)) return;
     const normalized = normalizePost(post);
     const ref = remoteDb.collection('duduta_posts').doc(normalized.id);
     batch.set(ref, {
@@ -277,6 +331,58 @@ async function seedRemotePostsFromLocal() {
     await batch.commit();
   } catch (error) {
     console.error('[DUDUTA] 초기 게시글 업로드 실패:', error);
+  }
+}
+
+async function runRemoteDeprecatedCleanup() {
+  if (!remoteDb || remoteDeprecatedCleanupTried) return;
+  remoteDeprecatedCleanupTried = true;
+
+  try {
+    const removedPostsSnap = await remoteDb.collection('duduta_posts')
+      .where('type', 'in', REMOVED_POST_TYPES)
+      .get();
+    if (!removedPostsSnap.empty) {
+      await deleteRemoteDocsInChunks(removedPostsSnap.docs.map((doc) => doc.ref));
+    }
+  } catch (error) {
+    console.error('[DUDUTA] 제거 대상 카테고리 게시글 정리 실패:', error);
+  }
+
+  try {
+    const albumSnap = await remoteDb.collection('duduta_album').get();
+    if (!albumSnap.empty) {
+      await Promise.all(albumSnap.docs.map(async (doc) => {
+        const data = doc.data() || {};
+        const storagePath = data && data.storagePath ? String(data.storagePath) : '';
+        if (storagePath && remoteStorage) {
+          try {
+            await remoteStorage.ref().child(storagePath).delete();
+          } catch (error) {
+            const code = error && error.code ? String(error.code) : '';
+            if (code !== 'storage/object-not-found') {
+              console.warn('[DUDUTA] 앨범 스토리지 파일 삭제 실패:', error);
+            }
+          }
+        }
+      }));
+      await deleteRemoteDocsInChunks(albumSnap.docs.map((doc) => doc.ref));
+    }
+  } catch (error) {
+    console.error('[DUDUTA] 앨범 서버 기록 정리 실패:', error);
+  }
+}
+
+async function deleteRemoteDocsInChunks(docRefs) {
+  if (!remoteDb) return;
+  const refs = (docRefs || []).filter(Boolean);
+  if (!refs.length) return;
+  const chunkSize = 400;
+  for (let i = 0; i < refs.length; i += chunkSize) {
+    const chunk = refs.slice(i, i + chunkSize);
+    const batch = remoteDb.batch();
+    chunk.forEach((ref) => batch.delete(ref));
+    await batch.commit();
   }
 }
 
@@ -305,6 +411,541 @@ function subscribeRemoteMemo() {
     }
   }, (error) => {
     console.error('[DUDUTA] 메모 실시간 동기화 실패:', error);
+  });
+}
+
+function subscribeRemoteAlbum() {
+  if (!remoteDb) return;
+
+  remoteDb.collection('duduta_album')
+    .orderBy('createdAtMs', 'desc')
+    .onSnapshot((snap) => {
+      albumItems = snap.docs.map((doc) => normalizeAlbumItem({ id: doc.id, ...doc.data() }));
+      saveJSON(STORAGE_KEYS.albumItems, albumItems);
+      renderAlbumBoard();
+      if (snap.size > ALBUM_MAX_ITEMS) {
+        trimAlbumOverflow();
+      }
+    }, (error) => {
+      console.error('[DUDUTA] 앨범 실시간 동기화 실패:', error);
+    });
+}
+
+function renderAlbumBoard() {
+  if (!albumGrid) return;
+  if (!albumItems.length) {
+    albumGrid.innerHTML = '<div class="post"><div class="post-content">등록된 사진이 없습니다.</div></div>';
+    return;
+  }
+
+  albumGrid.innerHTML = albumItems
+    .slice(0, ALBUM_MAX_ITEMS)
+    .map((item) => {
+      const canDelete = canManageAlbumItem(item);
+      return `
+        <article class="album-card">
+          <img class="album-image" src="${escapeAttr(item.imageUrl || '')}" alt="album image" loading="lazy" onclick="openAlbumLightbox('${escapeAttr(item.imageUrl || '')}')">
+          <div class="album-meta-row">
+            <span>${escapeHtml(item.uploaderName || 'Guest')}</span>
+            <span>${formatTime(item.createdAtMs)}</span>
+          </div>
+          ${item.caption ? `<div class="album-caption">${escapeHtml(item.caption)}</div>` : ''}
+          ${canDelete ? `<div class="album-actions"><button class="btn-ghost" onclick="deleteAlbumById('${item.id}')">삭제</button></div>` : ''}
+        </article>
+      `;
+    })
+    .join('');
+}
+
+function uploadAlbumImages() {
+  if (albumUploadInProgress) {
+    alert('이미 업로드 중입니다. 잠시만 기다려주세요.');
+    return;
+  }
+  const files = albumImageInput && albumImageInput.files ? Array.from(albumImageInput.files) : [];
+  const caption = albumCaptionInput ? (albumCaptionInput.value || '').trim() : '';
+
+  if (!files.length) {
+    alert('업로드할 이미지를 선택하세요.');
+    return;
+  }
+
+  const invalidType = files.find((file) => !String(file.type || '').startsWith('image/'));
+  if (invalidType) {
+    alert('이미지 파일만 업로드할 수 있습니다.');
+    return;
+  }
+  const oversized = files.find((file) => Number(file.size || 0) > ALBUM_MAX_FILE_SIZE);
+  if (oversized) {
+    alert('파일당 최대 10MB까지 업로드할 수 있습니다.');
+    return;
+  }
+
+  albumUploadInProgress = true;
+  startAlbumProgressHeartbeat();
+  if (albumUploadBtn) {
+    albumUploadBtn.disabled = true;
+    albumUploadBtn.textContent = '업로드 중...';
+  }
+  setAlbumUploadProgress(true, 1, '업로드 준비 중...');
+
+  const progressByFile = files.map(() => 0);
+  const pushProgress = (index, value) => {
+    const safe = Math.max(0, Math.min(1, Number(value) || 0));
+    if (safe < progressByFile[index]) return;
+    progressByFile[index] = safe;
+    const avg = progressByFile.reduce((sum, item) => sum + item, 0) / Math.max(1, progressByFile.length);
+    const percent = Math.max(1, Math.round(avg * 100));
+    setAlbumUploadProgress(true, percent, percent < 95 ? `${percent}% 업로드 중...` : '마무리 중...');
+  };
+
+  withTimeout(ensureAlbumBackendReady(), 8000, 'auth-timeout')
+    .then(() => {
+      setAlbumUploadProgress(true, 2, '파일 업로드 시작...');
+      storageUploadDisabled = false;
+      return runWithConcurrencyLimit(files, ALBUM_UPLOAD_CONCURRENCY, (file, index) => {
+        return uploadSingleAlbumFile(file, caption, (p) => pushProgress(index, p));
+      });
+    })
+    .then(() => {
+      setAlbumUploadProgress(true, 100, '업로드 완료, 정리 중...');
+      return trimAlbumOverflow().catch((error) => {
+        // 보관 개수 정리는 후처리이므로 업로드 성공을 실패로 바꾸지 않음
+        console.warn('[DUDUTA] 앨범 후처리 정리 실패:', error);
+      });
+    })
+    .then(() => {
+      if (albumImageInput) albumImageInput.value = '';
+      if (albumCaptionInput) albumCaptionInput.value = '';
+      setAlbumUploadProgress(true, 100, '업로드 완료');
+      alert('사진 업로드가 완료되었습니다.');
+    })
+    .catch((error) => {
+      console.error('[DUDUTA] 앨범 업로드 실패:', error);
+      const code = error && error.code ? ` (${error.code})` : '';
+      if (error && error.code === 'inline-image-too-large') {
+        alert('이미지 용량이 너무 커서 업로드에 실패했습니다. 더 작은 이미지로 시도하세요.');
+        return;
+      }
+      alert(`업로드에 실패했습니다${code}. 잠시 후 다시 시도하세요.`);
+    })
+    .finally(() => {
+      albumUploadInProgress = false;
+      stopAlbumProgressHeartbeat();
+      if (albumUploadBtn) {
+        albumUploadBtn.disabled = false;
+        albumUploadBtn.textContent = '사진 올리기';
+      }
+      setTimeout(() => {
+        if (!albumUploadInProgress) {
+          setAlbumUploadProgress(false, 0, '업로드 준비 중...');
+        }
+      }, 900);
+    });
+}
+
+function ensureAlbumBackendReady() {
+  if (typeof firebase === 'undefined') {
+    return Promise.reject(new Error('firebase-unavailable'));
+  }
+
+  if (!firebase.apps.length) {
+    firebase.initializeApp(FIREBASE_CONFIG);
+  }
+  if (!remoteDb) remoteDb = firebase.firestore();
+  if (!remoteAuth) remoteAuth = firebase.auth();
+  if (!remoteStorage) remoteStorage = firebase.storage();
+  if (!remoteAuth) {
+    return Promise.reject(new Error('auth-unavailable'));
+  }
+
+  if (remoteAuth.currentUser) {
+    remoteReady = true;
+    ensureRemoteSubscriptions();
+    return Promise.resolve();
+  }
+
+  if (!remoteAuthReadyPromise) {
+    remoteAuthReadyPromise = remoteAuth.signInAnonymously()
+      .then(() => {
+        remoteReady = true;
+        return true;
+      })
+      .catch((error) => {
+        remoteAuthReadyPromise = null;
+        throw error;
+      });
+  }
+
+  return remoteAuthReadyPromise.then(() => {
+    remoteReady = true;
+    ensureRemoteSubscriptions();
+  });
+}
+
+function withTimeout(promise, timeoutMs, code) {
+  const ms = Number(timeoutMs) > 0 ? Number(timeoutMs) : 10000;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const timeoutError = new Error(code || 'timeout');
+      timeoutError.code = code || 'timeout';
+      reject(timeoutError);
+    }, ms);
+
+    Promise.resolve(promise)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
+function runWithConcurrencyLimit(items, limit, worker) {
+  const list = Array.isArray(items) ? items : [];
+  const maxWorkers = Math.max(1, Number(limit) || 1);
+  if (!list.length) return Promise.resolve([]);
+  const results = new Array(list.length);
+  let nextIndex = 0;
+
+  function runOne() {
+    if (nextIndex >= list.length) return Promise.resolve();
+    const current = nextIndex;
+    nextIndex += 1;
+    return Promise.resolve(worker(list[current], current))
+      .then((value) => {
+        results[current] = value;
+        return runOne();
+      });
+  }
+
+  const workers = Array.from({ length: Math.min(maxWorkers, list.length) }, () => runOne());
+  return Promise.all(workers).then(() => results);
+}
+
+function uploadSingleAlbumFile(file, caption, onProgress) {
+  if (!remoteDb) return Promise.reject(new Error('remote db unavailable'));
+  const now = Date.now();
+  const safeName = String(file.name || 'image.jpg').replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `duduta_album/${now}_${Math.random().toString(36).slice(2, 10)}_${safeName}`;
+  const uploaderId = currentUser ? currentUser.id : guestToken;
+  const uploaderName = currentUser ? currentUser.name : 'Guest';
+  const ownerType = currentUser ? 'user' : 'guest';
+  const basePayload = {
+    caption,
+    uploaderId,
+    uploaderName,
+    ownerType,
+    createdAtMs: now
+  };
+
+  if (remoteStorage && !storageUploadDisabled) {
+    return uploadToStorageWithProgress(path, file, onProgress)
+      .then((snapshot) => snapshot.ref.getDownloadURL())
+      .then((imageUrl) => {
+        if (typeof onProgress === 'function') onProgress(1);
+        return remoteDb.collection('duduta_album').add({
+          ...basePayload,
+          imageUrl,
+          storagePath: path
+        });
+      })
+      .catch((error) => {
+        // Storage 권한/버킷 이슈가 있어도 Firestore 인라인 업로드로 계속 진행
+        console.warn('[DUDUTA] Storage 업로드 실패, Firestore 인라인 업로드로 대체:', error);
+        if (typeof onProgress === 'function') onProgress(0.22);
+        setAlbumUploadStatus('대체 업로드 경로로 전환 중...');
+        const code = String(error && error.code ? error.code : '');
+        if (isStorageFallbackError(code)) {
+          storageUploadDisabled = true;
+        }
+        return uploadInlineAlbumImage(file, basePayload, onProgress);
+      });
+  }
+
+  return uploadInlineAlbumImage(file, basePayload, onProgress);
+}
+
+function uploadInlineAlbumImage(file, basePayload, onProgress) {
+  if (typeof onProgress === 'function') onProgress(0.1);
+  setAlbumUploadStatus('이미지 최적화 중...');
+  return fileToInlineJpeg(file, ALBUM_INLINE_MAX_WIDTH, ALBUM_INLINE_JPEG_QUALITY, (step) => {
+    if (typeof onProgress !== 'function') return;
+    const mapped = 0.2 + (Math.max(0, Math.min(1, Number(step) || 0)) * 0.55);
+    onProgress(mapped);
+  })
+    .then((dataUrl) => {
+      if (typeof onProgress === 'function') onProgress(0.82);
+      const bytes = estimateDataUrlBytes(dataUrl);
+      if (bytes > ALBUM_INLINE_IMAGE_MAX_BYTES) {
+        const sizeError = new Error('inline-image-too-large');
+        sizeError.code = 'inline-image-too-large';
+        throw sizeError;
+      }
+      setAlbumUploadStatus('서버 저장 중...');
+      return remoteDb.collection('duduta_album').add({
+        ...basePayload,
+        imageUrl: dataUrl,
+        storagePath: '',
+        inline: true
+      });
+    })
+    .then((result) => {
+      if (typeof onProgress === 'function') onProgress(1);
+      return result;
+    });
+}
+
+function uploadToStorageWithProgress(path, file, onProgress) {
+  if (!remoteStorage) return Promise.reject(new Error('remote-storage-unavailable'));
+  return new Promise((resolve, reject) => {
+    const task = remoteStorage.ref().child(path).put(file);
+    let settled = false;
+    let stallTimer = null;
+    let totalTimer = null;
+
+    const clearTimers = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      if (totalTimer) clearTimeout(totalTimer);
+      stallTimer = null;
+      totalTimer = null;
+    };
+    const failWithCode = (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      try { task.cancel(); } catch (_) {}
+      const err = new Error(code);
+      err.code = code;
+      reject(err);
+    };
+    const bumpStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => failWithCode('storage/stall-timeout'), STORAGE_UPLOAD_STALL_TIMEOUT_MS);
+    };
+
+    totalTimer = setTimeout(() => failWithCode('storage/total-timeout'), STORAGE_UPLOAD_TOTAL_TIMEOUT_MS);
+    bumpStallTimer();
+
+    task.on('state_changed', (snapshot) => {
+      if (settled) return;
+      bumpStallTimer();
+      if (typeof onProgress !== 'function') return;
+      const total = Number(snapshot && snapshot.totalBytes) || 0;
+      const transferred = Number(snapshot && snapshot.bytesTransferred) || 0;
+      const ratio = total > 0 ? transferred / total : 0;
+      onProgress(0.08 + (ratio * 0.84));
+    }, (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      reject(error);
+    }, () => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      resolve(task.snapshot);
+    });
+  });
+}
+
+function isStorageFallbackError(code) {
+  const blockedCodes = [
+    'storage/unauthorized',
+    'storage/retry-limit-exceeded',
+    'storage/quota-exceeded',
+    'storage/object-not-found',
+    'storage/bucket-not-found',
+    'storage/invalid-url',
+    'storage/unknown',
+    'storage/stall-timeout',
+    'storage/total-timeout'
+  ];
+  return blockedCodes.includes(String(code || '').trim());
+}
+
+function setAlbumUploadProgress(visible, percent, statusText) {
+  if (albumUploadProgress) albumUploadProgress.classList.toggle('hidden', !visible);
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  if (!visible) {
+    albumProgressTarget = 0;
+    albumProgressDisplay = 0;
+    if (albumProgressRaf) cancelAnimationFrame(albumProgressRaf);
+    albumProgressRaf = null;
+    if (albumUploadBar) albumUploadBar.style.width = '0%';
+    if (albumUploadPercent) albumUploadPercent.textContent = '0%';
+  } else {
+    if (safePercent > albumProgressTarget) {
+      albumProgressTarget = safePercent;
+    }
+    startAlbumProgressAnimator();
+  }
+  if (albumUploadStatusText && statusText) albumUploadStatusText.textContent = statusText;
+}
+
+function setAlbumUploadStatus(text) {
+  if (!albumUploadStatusText) return;
+  albumUploadStatusText.textContent = text || '업로드 중...';
+}
+
+function startAlbumProgressAnimator() {
+  if (albumProgressRaf) return;
+  const tick = () => {
+    const gap = albumProgressTarget - albumProgressDisplay;
+    if (gap <= 0.05) {
+      albumProgressDisplay = albumProgressTarget;
+    } else {
+      const step = Math.max(0.4, Math.min(2.8, gap * 0.22));
+      albumProgressDisplay = Math.min(albumProgressTarget, albumProgressDisplay + step);
+    }
+
+    const shown = Math.max(0, Math.min(100, Math.round(albumProgressDisplay)));
+    if (albumUploadBar) albumUploadBar.style.width = `${shown}%`;
+    if (albumUploadPercent) albumUploadPercent.textContent = `${shown}%`;
+
+    if (albumProgressDisplay < albumProgressTarget - 0.05) {
+      albumProgressRaf = requestAnimationFrame(tick);
+      return;
+    }
+    albumProgressRaf = null;
+  };
+
+  albumProgressRaf = requestAnimationFrame(tick);
+}
+
+function startAlbumProgressHeartbeat() {
+  stopAlbumProgressHeartbeat();
+  albumProgressHeartbeat = setInterval(() => {
+    if (!albumUploadInProgress) return;
+    if (albumProgressTarget >= 92) return;
+    albumProgressTarget = Math.min(92, albumProgressTarget + 1);
+    startAlbumProgressAnimator();
+  }, 1200);
+}
+
+function stopAlbumProgressHeartbeat() {
+  if (!albumProgressHeartbeat) return;
+  clearInterval(albumProgressHeartbeat);
+  albumProgressHeartbeat = null;
+}
+
+function fileToInlineJpeg(file, maxWidth, quality, onStep) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onprogress = (event) => {
+      if (!event || !event.lengthComputable || typeof onStep !== 'function') return;
+      const ratio = event.total > 0 ? event.loaded / event.total : 0;
+      onStep(0.05 + (ratio * 0.35));
+    };
+    reader.onload = () => {
+      const src = typeof reader.result === 'string' ? reader.result : '';
+      if (!src) {
+        reject(new Error('file-read-failed'));
+        return;
+      }
+      if (typeof onStep === 'function') onStep(0.45);
+
+      const img = new Image();
+      img.onerror = () => reject(new Error('image-decode-failed'));
+      img.onload = () => {
+        if (typeof onStep === 'function') onStep(0.7);
+        const safeMaxWidth = Number(maxWidth) > 0 ? Number(maxWidth) : 1280;
+        const ratio = img.width > safeMaxWidth ? safeMaxWidth / img.width : 1;
+        const targetW = Math.max(1, Math.round(img.width * ratio));
+        const targetH = Math.max(1, Math.round(img.height * ratio));
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('canvas-unavailable'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        if (typeof onStep === 'function') onStep(0.95);
+        resolve(canvas.toDataURL('image/jpeg', Number(quality) || 0.8));
+      };
+      img.src = src;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function estimateDataUrlBytes(dataUrl) {
+  const raw = String(dataUrl || '');
+  const marker = raw.indexOf(',');
+  if (marker < 0) return 0;
+  const b64 = raw.slice(marker + 1);
+  return Math.ceil((b64.length * 3) / 4);
+}
+
+function trimAlbumOverflow() {
+  if (!remoteDb || albumTrimRunning) return Promise.resolve();
+  albumTrimRunning = true;
+
+  return remoteDb.collection('duduta_album')
+    .orderBy('createdAtMs', 'desc')
+    .get()
+    .then((snap) => {
+      const overflowDocs = snap.docs.slice(ALBUM_MAX_ITEMS);
+      if (!overflowDocs.length) return;
+      return Promise.all(overflowDocs.map((doc) => removeAlbumDoc(doc.id, doc.data())));
+    })
+    .catch((error) => {
+      console.error('[DUDUTA] 앨범 정리 실패:', error);
+    })
+    .finally(() => {
+      albumTrimRunning = false;
+    });
+}
+
+function removeAlbumDoc(id, data) {
+  if (!remoteDb) return Promise.resolve();
+  const storagePath = data && data.storagePath ? String(data.storagePath) : '';
+  const deleteStorage = storagePath && remoteStorage
+    ? remoteStorage.ref().child(storagePath).delete().catch((error) => {
+      const code = String(error && error.code ? error.code : '');
+      if (code === 'storage/object-not-found') return;
+      throw error;
+    })
+    : Promise.resolve();
+  return deleteStorage.then(() => remoteDb.collection('duduta_album').doc(id).delete());
+}
+
+function openAlbumLightbox(imageUrl) {
+  if (!albumLightbox || !albumLightboxImage) return;
+  albumLightboxImage.src = imageUrl || '';
+  albumLightbox.style.display = 'flex';
+}
+
+function closeAlbumLightbox() {
+  if (!albumLightbox || !albumLightboxImage) return;
+  albumLightboxImage.src = '';
+  albumLightbox.style.display = 'none';
+}
+
+function canManageAlbumItem(item) {
+  if (!item) return false;
+  if (isAdmin) return true;
+  if (currentUser && item.ownerType === 'user' && item.uploaderId === currentUser.id) return true;
+  return !currentUser && item.ownerType === 'guest' && item.uploaderId === guestToken;
+}
+
+function deleteAlbumById(id) {
+  const target = albumItems.find((item) => item.id === id);
+  if (!target) return;
+  if (!canManageAlbumItem(target)) {
+    alert('삭제 권한이 없습니다.');
+    return;
+  }
+  if (!confirm('이 사진을 삭제할까요?')) return;
+  removeAlbumDoc(id, target).catch((error) => {
+    console.error('[DUDUTA] 앨범 삭제 실패:', error);
+    alert('삭제에 실패했습니다. 잠시 후 다시 시도하세요.');
   });
 }
 
@@ -449,6 +1090,7 @@ function renderPosts() {
     : posts.filter((post) => post.type === activeChannel);
   const chatFiltered = posts.filter((post) => post.type === '소통');
   updateRightFeedPreviewVisibility();
+  toggleMainPanelsByChannel();
   renderFeedList(mainFeedList, mainFeedPager, mainFiltered, currentMainFeedPage, 'main', FEED_PAGE_SIZE);
   renderFeedList(chatFeedList, chatFeedPager, chatFiltered, currentChatFeedPage, 'chat', CHAT_FEED_PAGE_SIZE);
 }
@@ -456,6 +1098,12 @@ function renderPosts() {
 function updateRightFeedPreviewVisibility() {
   if (!rightFeedPreview) return;
   rightFeedPreview.classList.toggle('hidden', activeChannel === '소통');
+}
+
+function toggleMainPanelsByChannel() {
+  if (mainFeedPanel) {
+    mainFeedPanel.classList.remove('hidden');
+  }
 }
 
 function applyInitialChannelFromUrl() {
@@ -1053,7 +1701,9 @@ function toggleTheme() {
 
 function updateThemeButton(isDark) {
   if (!themeToggleBtn) return;
-  themeToggleBtn.textContent = isDark ? '☀' : '🌙';
+  themeToggleBtn.innerHTML = isDark
+    ? '<svg class="theme-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor"></circle><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="2.2" x2="12" y2="5.2"></line><line x1="12" y1="18.8" x2="12" y2="21.8"></line><line x1="2.2" y1="12" x2="5.2" y2="12"></line><line x1="18.8" y1="12" x2="21.8" y2="12"></line><line x1="4.6" y1="4.6" x2="6.8" y2="6.8"></line><line x1="17.2" y1="17.2" x2="19.4" y2="19.4"></line><line x1="17.2" y1="6.8" x2="19.4" y2="4.6"></line><line x1="4.6" y1="19.4" x2="6.8" y2="17.2"></line></g></svg>'
+    : '<svg class="theme-icon-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M14.9 2.5a1 1 0 0 1 .76 1.63A8.4 8.4 0 1 0 19.87 15a1 1 0 0 1 1.61.79A10.4 10.4 0 1 1 13.95 2.53c.31-.07.63.01.95-.03z" fill="currentColor"></path></svg>';
   themeToggleBtn.title = isDark ? '라이트모드 전환' : '다크모드 전환';
   themeToggleBtn.setAttribute('aria-label', isDark ? '라이트모드 전환' : '다크모드 전환');
 }
@@ -1090,6 +1740,10 @@ function openModal(id) {
 }
 
 function closeModal(id) {
+  if (id === 'albumLightbox') {
+    closeAlbumLightbox();
+    return;
+  }
   const modal = document.getElementById(id);
   if (modal) modal.style.display = 'none';
   if (id === 'postEditModal') {
@@ -1138,14 +1792,28 @@ function saveJSON(key, data) {
 }
 
 function normalizePost(post) {
+  const rawType = String((post && post.type) || '');
   return {
     id: post.id || crypto.randomUUID(),
     nick: post.nick || 'Guest',
     ownerType: post.ownerType || (post.nick === 'Guest' ? 'guest' : 'user'),
     ownerId: post.ownerId || '',
-    type: CATEGORIES.includes(post.type) ? post.type : '소통',
+    type: CATEGORIES.includes(rawType) || isDeprecatedPostType(rawType) ? rawType : '소통',
     text: String(post.text || ''),
     createdAt: Number(post.createdAt) || Date.now()
+  };
+}
+
+function normalizeAlbumItem(item) {
+  return {
+    id: item.id || crypto.randomUUID(),
+    imageUrl: String(item.imageUrl || ''),
+    storagePath: String(item.storagePath || ''),
+    caption: String(item.caption || ''),
+    uploaderId: String(item.uploaderId || ''),
+    uploaderName: String(item.uploaderName || 'Guest'),
+    ownerType: item.ownerType === 'user' ? 'user' : 'guest',
+    createdAtMs: Number(item.createdAtMs) || Date.now()
   };
 }
 
@@ -1223,18 +1891,40 @@ function applyPostCategory(type) {
 
 function getTypeClass(type) {
   if (type === '쿠폰정보') return 'type-coupon';
-  if (type === '건축정보') return 'type-build';
   if (type === '게임정보') return 'type-game';
-  if (type === '아이템위치정보') return 'type-item';
+  if (type === ALBUM_CHANNEL) return 'type-album';
   if (type === '소통') return 'type-chat';
   return '';
 }
 
 function updateActiveTagStyle(type) {
   if (!activeChannelTag) return;
-  activeChannelTag.classList.remove('type-coupon', 'type-build', 'type-game', 'type-item', 'type-chat');
+  activeChannelTag.classList.remove('type-coupon', 'type-build', 'type-game', 'type-item', 'type-album', 'type-chat');
   const cls = getTypeClass(type);
   if (cls) activeChannelTag.classList.add(cls);
+}
+
+function isDeprecatedPostType(type) {
+  return REMOVED_POST_TYPES.includes(String(type || ''));
+}
+
+function purgeDeprecatedLocalData() {
+  const filteredPosts = (posts || []).filter((post) => !isDeprecatedPostType(post.type));
+  if (filteredPosts.length !== posts.length) {
+    posts = filteredPosts;
+    saveJSON(STORAGE_KEYS.posts, posts);
+  }
+
+  if (albumItems.length) {
+    albumItems = [];
+    saveJSON(STORAGE_KEYS.albumItems, albumItems);
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.albumItems);
+  }
+
+  if (activeChannel === ALBUM_CHANNEL || isDeprecatedPostType(activeChannel)) {
+    activeChannel = 'all';
+  }
 }
 
 function togglePostExpand(id) {
@@ -1262,7 +1952,8 @@ function goChatFeedPage(page) {
 
 window.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  ['signupModal', 'loginModal', 'renameModal', 'adminModal', 'postEditModal', 'adminUsersModal'].forEach(closeModal);
+  ['signupModal', 'loginModal', 'renameModal', 'adminModal', 'postEditModal', 'adminUsersModal', 'albumLightbox'].forEach(closeModal);
+  closeAlbumLightbox();
 });
 
 renderPosts();
@@ -1292,7 +1983,16 @@ window.applyPostCategory = applyPostCategory;
 window.togglePostExpand = togglePostExpand;
 window.goFeedPage = goFeedPage;
 window.goChatFeedPage = goChatFeedPage;
+window.uploadAlbumImages = uploadAlbumImages;
+window.deleteAlbumById = deleteAlbumById;
+window.openAlbumLightbox = openAlbumLightbox;
+window.closeAlbumLightbox = closeAlbumLightbox;
 window.adminRenameUser = adminRenameUser;
 window.adminDeleteUser = adminDeleteUser;
 window.openAdminUsersModal = openAdminUsersModal;
+
+
+
+
+
 

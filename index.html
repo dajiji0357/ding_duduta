@@ -11,6 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
 </head>
 <body>
   <div class="page-bg-shape shape-1"></div>
@@ -20,7 +21,7 @@
     <aside class="panel sidebar">
       <div class="sidebar-title-row">
         <h1>DUDUTA</h1>
-        <button id="themeToggleBtn" class="theme-icon-btn" onclick="toggleTheme()" aria-label="다크모드 전환" title="다크모드 전환">🌙</button>
+        <button id="themeToggleBtn" class="theme-icon-btn" onclick="toggleTheme()" aria-label="다크모드 전환" title="다크모드 전환"></button>
       </div>
       <p class="muted">두두타즈 즐겜러들 어서오고</p>
 
@@ -28,9 +29,7 @@
       <div id="channelList" class="channel-list">
         <button class="channel-btn active" data-channel="all"># 전체</button>
         <button class="channel-btn" data-channel="쿠폰정보"># 쿠폰 정보</button>
-        <button class="channel-btn" data-channel="건축정보"># 건축 정보</button>
         <button class="channel-btn" data-channel="게임정보"># 게임 정보</button>
-        <button class="channel-btn" data-channel="아이템위치정보"># 아이템 위치 정보</button>
         <button class="channel-btn" data-channel="소통"># 소통</button>
       </div>
 
@@ -55,9 +54,7 @@
         <div class="composer-grid">
           <select id="typeSelect">
             <option value="쿠폰정보">쿠폰 정보</option>
-            <option value="건축정보">건축 정보</option>
             <option value="게임정보">게임 정보</option>
-            <option value="아이템위치정보">아이템 위치 정보</option>
             <option value="소통" selected>소통</option>
           </select>
           <input id="nicknameInput" type="text" placeholder="아이디" maxlength="24">
@@ -73,7 +70,7 @@
           </div>
         </div>
       </section>
-      <section class="panel feed">
+      <section id="mainFeedPanel" class="panel feed">
         <div class="panel-head">
           <h3>커뮤니티 피드</h3>
         </div>
@@ -159,9 +156,7 @@
       <select id="editNickSelect"></select>
       <select id="editTypeSelect">
         <option value="쿠폰정보">쿠폰 정보</option>
-        <option value="건축정보">건축 정보</option>
         <option value="게임정보">게임 정보</option>
-        <option value="아이템위치정보">아이템 위치 정보</option>
         <option value="소통">소통</option>
       </select>
       <input id="editTitleInput" type="text" maxlength="80" placeholder="수정할 제목을 입력하세요.">
