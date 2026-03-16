@@ -406,7 +406,7 @@ function subscribeRemoteMemo() {
 
     const text = String((doc.data() && doc.data().text) || '');
     localStorage.setItem(STORAGE_KEYS.sharedMemo, text);
-    if (document.activeElement !== strategyMemo) {
+    if (strategyMemo && document.activeElement !== strategyMemo) {
       strategyMemo.value = text;
     }
   }, (error) => {
@@ -1030,7 +1030,7 @@ function clearPosts() {
 }
 
 function saveMemo() {
-  const text = strategyMemo.value || '';
+  const text = strategyMemo ? (strategyMemo.value || '') : (localStorage.getItem(STORAGE_KEYS.sharedMemo) || '');
   localStorage.setItem(STORAGE_KEYS.sharedMemo, text);
 
   if (remoteReady && remoteDb) {
@@ -1049,7 +1049,7 @@ function saveMemo() {
 function clearMemo() {
   if (!confirm('전체 메모를 초기화할까요?')) return;
 
-  strategyMemo.value = '';
+  if (strategyMemo) strategyMemo.value = '';
   localStorage.removeItem(STORAGE_KEYS.sharedMemo);
 
   if (remoteReady && remoteDb) {
@@ -1717,12 +1717,16 @@ function syncInputsForCurrentUser() {
   nicknameInput.disabled = true;
   if (currentUser) {
     nicknameInput.value = currentUser.name;
-    strategyMemo.value = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
+    if (strategyMemo) {
+      strategyMemo.value = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
+    }
     return;
   }
 
   nicknameInput.value = 'Guest';
-  strategyMemo.value = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
+  if (strategyMemo) {
+    strategyMemo.value = localStorage.getItem(STORAGE_KEYS.sharedMemo) || '';
+  }
 }
 
 function getGuestToken() {
@@ -1866,7 +1870,11 @@ function canEditPost(post) {
   const ownerId = post.ownerId || inferOwnerId(post);
 
   if (currentUser) {
-    return ownerType === 'user' && ownerId === currentUser.id;
+    const postOwnerId = String(ownerId || '').trim();
+    const currentId = String(currentUser.id || '').trim();
+    if (ownerType === 'user' && postOwnerId && currentId && postOwnerId === currentId) return true;
+    if (ownerType === 'user' && String(post.nick || '') === String(currentUser.name || '')) return true;
+    return false;
   }
 
   return ownerType === 'guest' && ownerId === guestToken;
