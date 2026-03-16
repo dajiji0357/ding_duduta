@@ -93,6 +93,9 @@ body.dark-mode .shape-2 {
   width: 52px;
   height: 52px;
   animation: duduta-walker-move 14s ease-in-out infinite alternate, duduta-walker-bob 0.55s ease-in-out infinite;
+  pointer-events: auto;
+  cursor: pointer;
+  transform-origin: center bottom;
 }
 
 .duduta-walker-img {
@@ -101,6 +104,25 @@ body.dark-mode .shape-2 {
   object-fit: contain;
   filter: drop-shadow(0 4px 6px rgba(22, 31, 47, 0.25));
   animation: duduta-walker-flip 28s linear infinite;
+}
+
+.duduta-mustard-burst {
+  position: absolute;
+  left: 32px;
+  bottom: 30px;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.duduta-walker-squirt {
+  position: absolute;
+  width: 9px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ffe36e, #f2b700);
+  opacity: 0;
+  transform: translate(0, 0) scale(0.4) rotate(var(--rot, 0deg));
 }
 
 .duduta-walker-bubble {
@@ -162,6 +184,26 @@ body.dark-mode .duduta-walker-bubble::before {
   background: rgba(30, 43, 67, 0.96);
 }
 
+.duduta-walker.caught {
+  animation-play-state: paused;
+}
+
+.duduta-walker.caught .duduta-walker-img {
+  animation-play-state: paused;
+}
+
+.duduta-walker.caught .duduta-walker-bubble {
+  opacity: 0;
+}
+
+.duduta-walker.is-startled .duduta-walker-img {
+  animation: duduta-walker-startle 0.5s ease;
+}
+
+.duduta-walker.is-squirting .duduta-walker-squirt {
+  animation: duduta-mustard-squirt 0.58s ease-out forwards;
+}
+
 @keyframes duduta-walker-move {
   0% { left: 0; }
   100% { left: calc(100% - 52px); }
@@ -176,6 +218,28 @@ body.dark-mode .duduta-walker-bubble::before {
 @keyframes duduta-walker-flip {
   0%, 49.999% { transform: scaleX(1); }
   50%, 100% { transform: scaleX(-1); }
+}
+
+@keyframes duduta-walker-startle {
+  0% { transform: translateY(0) scale(1) rotate(0deg); }
+  20% { transform: translateY(-6px) scale(1.08) rotate(-8deg); }
+  46% { transform: translateY(-2px) scale(0.97) rotate(7deg); }
+  74% { transform: translateY(-5px) scale(1.05) rotate(-5deg); }
+  100% { transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+@keyframes duduta-mustard-squirt {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.35) rotate(var(--rot, 0deg));
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--dx, 30px), var(--dy, -18px)) scale(0.95) rotate(var(--rot, 0deg));
+  }
 }
 
 .panel {

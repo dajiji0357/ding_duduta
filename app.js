@@ -93,6 +93,9 @@ const albumGrid = document.getElementById('albumGrid');
 const chatFeedList = document.getElementById('chatFeedList');
 const chatFeedPager = document.getElementById('chatFeedPager');
 const rightFeedPreview = document.getElementById('rightFeedPreview');
+const dudutaWalker = document.querySelector('.duduta-walker');
+const dudutaWalkerBubble = document.querySelector('.duduta-walker-bubble');
+const dudutaMustardBurst = document.querySelector('.duduta-mustard-burst');
 const activeChannelTag = document.getElementById('activeChannelTag');
 const nicknameInput = document.getElementById('nicknameInput');
 const titleInput = document.getElementById('titleInput');
@@ -128,6 +131,7 @@ const editNickSelect = document.getElementById('editNickSelect');
 const editTypeSelect = document.getElementById('editTypeSelect');
 const editTitleInput = document.getElementById('editTitleInput');
 const editMessageInput = document.getElementById('editMessageInput');
+let dudutaWalkerResumeTimer = null;
 
 purgeDeprecatedLocalData();
 
@@ -154,6 +158,7 @@ applyInitialChannelFromUrl();
 renderUserSection();
 syncInputsForCurrentUser();
 initRealtimeSync();
+initDudutaWalkerGame();
 
 channelList.addEventListener('click', (event) => {
   const button = event.target.closest('.channel-btn');
@@ -1763,6 +1768,60 @@ function closeModal(id) {
 
 function closeOnBackdrop(event, modalId) {
   if (event.target.id === modalId) closeModal(modalId);
+}
+
+function initDudutaWalkerGame() {
+  if (!dudutaWalker) return;
+
+  dudutaWalker.addEventListener('click', () => {
+    if (dudutaWalker.classList.contains('caught')) return;
+
+    dudutaWalker.classList.add('caught');
+    dudutaWalker.classList.add('is-startled');
+    dudutaWalker.classList.add('is-squirting');
+
+    if (dudutaWalkerBubble) {
+      dudutaWalkerBubble.textContent = '앗! 머스터드 발사!';
+    }
+
+    createMustardBurst();
+
+    setTimeout(() => {
+      dudutaWalker.classList.remove('is-startled');
+      dudutaWalker.classList.remove('is-squirting');
+    }, 620);
+
+    if (dudutaWalkerResumeTimer) {
+      clearTimeout(dudutaWalkerResumeTimer);
+    }
+    dudutaWalkerResumeTimer = setTimeout(() => {
+      dudutaWalker.classList.remove('caught');
+      if (dudutaWalkerBubble) {
+        dudutaWalkerBubble.textContent = '오늘은 무슨일로 오셨나요?';
+      }
+    }, 1800);
+  });
+}
+
+function createMustardBurst() {
+  if (!dudutaMustardBurst) return;
+  dudutaMustardBurst.innerHTML = '';
+
+  for (let i = 0; i < 12; i += 1) {
+    const particle = document.createElement('span');
+    particle.className = 'duduta-walker-squirt';
+    const angle = -50 + (Math.random() * 42);
+    const distance = 20 + (Math.random() * 46);
+    const dx = Math.cos((angle * Math.PI) / 180) * distance;
+    const dy = Math.sin((angle * Math.PI) / 180) * distance;
+    const rot = -18 + (Math.random() * 36);
+    const delay = Math.round(Math.random() * 140);
+    particle.style.setProperty('--dx', `${dx.toFixed(1)}px`);
+    particle.style.setProperty('--dy', `${dy.toFixed(1)}px`);
+    particle.style.setProperty('--rot', `${rot.toFixed(1)}deg`);
+    particle.style.animationDelay = `${delay}ms`;
+    dudutaMustardBurst.appendChild(particle);
+  }
 }
 
 function renderPostContent(text) {
